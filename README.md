@@ -5,12 +5,13 @@ Aplicación nativa para macOS que guarda prompts en tarjetas, junto con la IA, e
 ## Funciones
 
 - Crear, editar, abrir y copiar prompts.
+- Arrastrar las tarjetas sobre otras para cambiar su orden, o usar el menú ⋯ para moverlas antes, después, al principio o al final.
 - Anotar varias configuraciones de IA en una tarjeta.
 - Buscar por título, contenido, categoría, IA o modelo.
 - Mover prompts a una papelera y restaurarlos.
 - Guardar automáticamente en el Mac.
 - Exportar e importar respaldos JSON, conservando los registros existentes.
-- Iniciar con seis prompts reutilizables.
+- Iniciar con siete prompts reutilizables, incluido el copiloto de reuniones en inglés.
 
 Los campos de IA, modelo y esfuerzo son recordatorios. La aplicación no ejecuta modelos ni cambia la configuración de otras aplicaciones. No requiere cuenta ni conexión a Internet.
 
@@ -18,7 +19,7 @@ Los campos de IA, modelo y esfuerzo son recordatorios. La aplicación no ejecuta
 
 Descarga el ZIP de la sección **Releases**, descomprímelo y mueve **Mis Prompts.app** a Aplicaciones.
 
-La versión 1.0 requiere **macOS 14 o posterior y Apple Silicon**. Tiene una firma local ad hoc; no está notarizada por Apple. En otro Mac, Gatekeeper puede pedir autorización para abrirla. También puedes compilarla desde el código fuente.
+La versión 1.1 requiere **macOS 14 o posterior y Apple Silicon**. Tiene una firma local ad hoc; no está notarizada por Apple. En otro Mac, Gatekeeper puede pedir autorización para abrirla. También puedes compilarla desde el código fuente.
 
 ## Compilar
 
@@ -27,7 +28,7 @@ Requiere macOS, las herramientas de línea de comandos de Xcode, Swift 6.2 o pos
 ```bash
 bash scripts/test.sh
 bash scripts/build.sh
-open "dist/Mis Prompts.app"
+open ".build/App.noindex/Mis Prompts.app"
 ```
 
 El script compila para la arquitectura del Mac actual, genera el icono, firma el paquete localmente y crea un ZIP en `dist/`. No modifica las credenciales ni las preferencias del sistema.
@@ -41,6 +42,10 @@ La biblioteca se guarda fuera de la aplicación, en:
 ```
 
 Antes de guardar un cambio, se conserva la versión anterior en `library.previous.json`. Los prompts de la papelera permanecen dentro de la biblioteca. Los respaldos exportados incluyen la papelera.
+
+El orden de las tarjetas se guarda automáticamente y se conserva en los respaldos. Al reordenar resultados de búsqueda, las tarjetas ocultas y la papelera mantienen sus posiciones. Para probar la interfaz con una biblioteca temporal, abre la aplicación con `--args --demo`.
+
+Si ya usabas la versión 1.0, puedes importar `Resources/Seed.json` desde **Importar respaldo** para añadir el prompt de copiloto de reuniones. Las fases PREPARA, INICIA y DETENTE incluyen recordatorios de modelo y esfuerzo.
 
 La importación agrega los identificadores que no existen; no sobrescribe prompts ya presentes. Cambiar de versión o mover la aplicación no elimina la biblioteca. Si el archivo existente no es válido, la aplicación informa el error y evita reemplazarlo.
 
