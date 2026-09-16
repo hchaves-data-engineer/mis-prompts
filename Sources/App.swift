@@ -2,15 +2,27 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+extension UTType { static let promptCard = UTType(exportedAs: "local.henry.misprompts.prompt-card") }
+struct PromptDrag: Codable, Transferable {
+    let id: UUID
+    let session: UUID
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .promptCard)
+    }
+}
+
 @MainActor final class PromptStore: ObservableObject {
     @Published var library = Library()
     @Published var errorMessage: String?
     @Published var notice = ""
     @Published var available = false
     let file: LibraryFile
+    let sessionID = UUID()
+    let isDemo = CommandLine.arguments.contains("--demo")
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        file = LibraryFile(directory: support.appendingPathComponent("Mis Prompts", isDirectory: true))
+        let directory = isDemo ? FileManager.default.temporaryDirectory.appendingPathComponent("MisPromptsDemo-\(UUID())") : support.appendingPathComponent("Mis Prompts", isDirectory: true)
+        file = LibraryFile(directory: directory)
         do {
             guard let seedURL = Bundle.main.url(forResource: "Seed", withExtension: "json") else { throw CocoaError(.fileNoSuchFile) }
             library = try file.load(seed: Data(contentsOf: seedURL))
@@ -32,6 +44,11 @@ import UniformTypeIdentifiers
         if let index = newLibrary.prompts.firstIndex(where: { $0.id == prompt.id }) { newLibrary.prompts[index] = prompt }
         else { newLibrary.prompts.insert(prompt, at: 0) }
         if commit(newLibrary) { notice = "Prompt guardado"; return true }
+        return false
+    }
+    @discardableResult func move(_ source: UUID, to target: UUID, visibleIDs: [UUID]) -> Bool {
+        guard let reordered = library.moving(source, to: target, within: visibleIDs) else { return false }
+        if commit(reordered) { notice = "Orden guardado"; return true }
         return false
     }
     func trash(_ prompt: Prompt) {
@@ -96,7 +113,7 @@ import UniformTypeIdentifiers
                 Button("Exportar respaldo…", action: store.exportLibrary).disabled(!store.available)
             }
             CommandGroup(replacing: .appInfo) {
-                Button("Acerca de Mis Prompts") { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Mis Prompts", .applicationVersion: "1.0", .credits: NSAttributedString(string: "Tu biblioteca personal de prompts. Guardada en este Mac.")]) }
+                Button("Acerca de Mis Prompts") { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Mis Prompts", .applicationVersion: "1.1", .credits: NSAttributedString(string: "Tu biblioteca personal de prompts. Guardada en este Mac.")]) }
             }
         }
     }
@@ -115,6 +132,7 @@ struct LibraryView: View {
     @State private var editPrompt: Prompt?
     @State private var readPrompt: Prompt?
     @State private var trashPrompt: Prompt?
+    @State private var dropTarget: UUID?
     private var visible: [Prompt] {
         store.library.prompts.filter { prompt in
             let matchesSection = section == .all ? prompt.deletedAt == nil : prompt.deletedAt != nil
@@ -139,7 +157,7 @@ struct LibraryView: View {
                     Button(action: store.importLibrary) { Label("Importar respaldo", systemImage: "square.and.arrow.down") }.buttonStyle(.plain).disabled(!store.available)
                     Button(action: store.exportLibrary) { Label("Exportar respaldo", systemImage: "square.and.arrow.up") }.buttonStyle(.plain).disabled(!store.available)
                     Divider()
-                    Label("Guardado en este Mac", systemImage: "internaldrive").font(.caption).foregroundStyle(.secondary)
+                    Label(store.isDemo ? "Demostración" : "Guardado en este Mac", systemImage: "internaldrive").font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(18).frame(width: 210).background(Color(nsColor: .controlBackgroundColor))
             Divider()
@@ -147,7 +165,7 @@ struct LibraryView: View {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(section.rawValue).font(.largeTitle.weight(.semibold))
-                        Text(section == .all ? "El texto y la configuración, siempre juntos." : "Los prompts eliminados se conservan aquí.").foregroundStyle(.secondary)
+                        Text(section == .all ? "Arrastra las tarjetas para ordenarlas a tu gusto." : "Los prompts eliminados se conservan aquí.").foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button { editPrompt = Prompt() } label: { Label("Nuevo prompt", systemImage: "plus") }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!store.available)
@@ -161,7 +179,20 @@ struct LibraryView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], alignment: .leading, spacing: 16) {
                             ForEach(visible) { prompt in
-                                PromptCard(prompt: prompt, isTrash: section == .trash, onOpen: { readPrompt = prompt }, onEdit: { editPrompt = prompt }, onCopy: { store.copy(prompt) }, onTrash: { trashPrompt = prompt }, onRestore: { store.restore(prompt) })
+                                if section == .all {
+                                    card(prompt)
+                                        .draggable(PromptDrag(id: prompt.id, session: store.sessionID)) {
+                                            Label(prompt.title, systemImage: "rectangle.on.rectangle").padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 9))
+                                        }
+                                        .dropDestination(for: PromptDrag.self) { items, _ in
+                                            dropTarget = nil
+                                            guard items.count == 1, let item = items.first, item.session == store.sessionID else { return false }
+                                            return store.move(item.id, to: prompt.id, visibleIDs: visible.map(\.id))
+                                        } isTargeted: { targeted in
+                                            if targeted { dropTarget = prompt.id } else if dropTarget == prompt.id { dropTarget = nil }
+                                        }
+                                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(dropTarget == prompt.id ? Color.accentColor : Color.clear, lineWidth: 3).allowsHitTesting(false))
+                                } else { card(prompt) }
                             }
                         }.padding(2)
                     }
@@ -170,6 +201,8 @@ struct LibraryView: View {
             }.padding(28).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onReceive(NotificationCenter.default.publisher(for: .newPrompt)) { _ in editPrompt = Prompt() }
+        .onChange(of: section) { _, _ in dropTarget = nil }
+        .onChange(of: search) { _, _ in dropTarget = nil }
         .sheet(item: $editPrompt) { prompt in PromptEditor(prompt: prompt, onSave: store.save).environmentObject(store) }
         .sheet(item: $readPrompt) { prompt in PromptReader(prompt: prompt, onCopy: { store.copy(prompt) }, onEdit: { readPrompt = nil; editPrompt = prompt }) }
         .alert("¿Mover este prompt a la papelera?", isPresented: Binding(get: { trashPrompt != nil }, set: { if !$0 { trashPrompt = nil } })) {
@@ -179,6 +212,14 @@ struct LibraryView: View {
         .alert("No se pudo completar la operación", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("Aceptar", role: .cancel) { store.errorMessage = nil }
         } message: { Text(store.errorMessage ?? "") }
+    }
+    private func card(_ prompt: Prompt) -> some View {
+        let index = visible.firstIndex(where: { $0.id == prompt.id }) ?? 0
+        return PromptCard(prompt: prompt, isTrash: section == .trash, onOpen: { readPrompt = prompt }, onEdit: { editPrompt = prompt }, onCopy: { store.copy(prompt) }, onTrash: { trashPrompt = prompt }, onRestore: { store.restore(prompt) }, canMoveEarlier: index > 0, canMoveLater: index + 1 < visible.count, onMove: { offset in
+            let destination = offset == Int.min ? 0 : offset == Int.max ? visible.count - 1 : index + offset
+            guard visible.indices.contains(destination) else { return }
+            _ = store.move(prompt.id, to: visible[destination].id, visibleIDs: visible.map(\.id))
+        })
     }
 }
 
@@ -190,9 +231,16 @@ struct PromptCard: View {
     let onCopy: () -> Void
     let onTrash: () -> Void
     let onRestore: () -> Void
+    let canMoveEarlier: Bool
+    let canMoveLater: Bool
+    let onMove: (Int) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(prompt.category.isEmpty ? "Sin categoría" : prompt.category).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text(prompt.category.isEmpty ? "Sin categoría" : prompt.category).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if !isTrash { Image(systemName: "line.3.horizontal").foregroundStyle(.secondary).help("Arrastra esta tarjeta sobre otra para cambiar su posición").accessibilityLabel("Arrastrar para ordenar") }
+            }
             Text(prompt.title).font(.title3.weight(.semibold)).lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
             if !prompt.summary.isEmpty { Text(prompt.summary).foregroundStyle(.secondary).lineLimit(3) }
             Divider()
@@ -212,8 +260,14 @@ struct PromptCard: View {
                     Spacer()
                     Menu {
                         Button("Editar", systemImage: "pencil", action: onEdit)
+                        Divider()
+                        Button("Mover antes", systemImage: "arrow.up") { onMove(-1) }.disabled(!canMoveEarlier)
+                        Button("Mover después", systemImage: "arrow.down") { onMove(1) }.disabled(!canMoveLater)
+                        Button("Mover al principio") { onMove(Int.min) }.disabled(!canMoveEarlier)
+                        Button("Mover al final") { onMove(Int.max) }.disabled(!canMoveLater)
+                        Divider()
                         Button("Mover a la papelera", systemImage: "trash", role: .destructive, action: onTrash)
-                    } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24).help("Editar o eliminar prompt")
+                    } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24).help("Editar, mover o eliminar prompt")
                 }
             }
         }.padding(20).frame(maxWidth: .infinity, minHeight: 282, alignment: .topLeading)

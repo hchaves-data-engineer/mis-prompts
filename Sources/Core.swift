@@ -21,6 +21,23 @@ struct Prompt: Codable, Identifiable, Equatable {
 struct Library: Codable, Equatable {
     var version = 1
     var prompts: [Prompt] = []
+
+    // Reorder only the visible slots. Search results never displace hidden cards
+    // or items in the trash, and no prompt contents/timestamps are modified.
+    func moving(_ sourceID: UUID, to targetID: UUID, within visibleIDs: [UUID]) -> Library? {
+        let ids = Set(visibleIDs)
+        guard sourceID != targetID, ids.count == visibleIDs.count,
+              ids.contains(sourceID), ids.contains(targetID) else { return nil }
+        let slots = prompts.indices.filter { ids.contains(prompts[$0].id) }
+        guard slots.count == ids.count, slots.allSatisfy({ prompts[$0].deletedAt == nil }) else { return nil }
+        var ordered = slots.map { prompts[$0] }
+        guard let source = ordered.firstIndex(where: { $0.id == sourceID }),
+              let target = ordered.firstIndex(where: { $0.id == targetID }) else { return nil }
+        ordered.insert(ordered.remove(at: source), at: target)
+        var result = self
+        for (slot, prompt) in zip(slots, ordered) { result.prompts[slot] = prompt }
+        return result
+    }
 }
 
 enum LibraryError: LocalizedError {
